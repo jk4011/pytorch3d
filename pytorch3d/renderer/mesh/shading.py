@@ -16,7 +16,7 @@ from .textures import TexturesVertex
 
 
 def _apply_lighting(
-    points, normals, lights, cameras, materials
+    points, normals, lights_list, cameras, materials
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Args:
@@ -31,17 +31,30 @@ def _apply_lighting(
         diffuse_color: same shape as the input points
         specular_color: same shape as the input points
     """
-    light_diffuse = lights.diffuse(normals=normals, points=points)
-    light_specular = lights.specular(
-        normals=normals,
-        points=points,
-        camera_position=cameras.get_camera_center(),
-        shininess=materials.shininess,
-    )
-    ambient_color = materials.ambient_color * lights.ambient_color
-    diffuse_color = materials.diffuse_color * light_diffuse
-    specular_color = materials.specular_color * light_specular
-
+    # TODO: implement multiple points
+    ambient_color_list = []
+    diffuse_color_list = []
+    specular_color_list = []
+    for lights in lights_list:
+        light_diffuse = lights.diffuse(normals=normals, points=points)
+        light_specular = lights.specular(
+            normals=normals,
+            points=points,
+            camera_position=cameras.get_camera_center(),
+            shininess=materials.shininess,
+        )
+        ambient_color = materials.ambient_color * lights.ambient_color
+        diffuse_color = materials.diffuse_color * light_diffuse
+        specular_color = materials.specular_color * light_specular
+        
+        ambient_color_list.append(ambient_color)
+        diffuse_color_list.append(diffuse_color)
+        specular_color_list.append(specular_color)
+    
+    ambient_color = torch.stack(ambient_color_list, dim=0).sum(dim=0)
+    diffuse_color = torch.stack(diffuse_color_list, dim=0).sum(dim=0)
+    specular_color = torch.stack(specular_color_list, dim=0).sum(dim=0)
+    
     if normals.dim() == 2 and points.dim() == 2:
         # If given packed inputs remove batch dim in output.
         return (
