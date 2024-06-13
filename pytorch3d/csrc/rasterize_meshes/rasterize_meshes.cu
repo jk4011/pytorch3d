@@ -17,6 +17,7 @@
 #include "rasterize_points/rasterization_utils.cuh"
 #include "utils/float_math.cuh"
 #include "utils/geometry_utils.cuh"
+#include <iostream>
 
 namespace {
 // A structure for holding details about a pixel.
@@ -119,7 +120,9 @@ __device__ void CheckPixelInsideFace(
     const int K,
     const bool perspective_correct,
     const bool clip_barycentric_coords,
-    const bool cull_backfaces) {
+    const bool cull_backfaces,
+    const bool back_render)
+    {
   const auto v012 = GetSingleFaceVerts(face_verts, face_idx);
   const float3 v0 = thrust::get<0>(v012);
   const float3 v1 = thrust::get<1>(v012);
@@ -157,11 +160,15 @@ __device__ void CheckPixelInsideFace(
   const float3 p_bary_clip =
       !clip_barycentric_coords ? p_bary : BarycentricClipForward(p_bary);
 
-  const float pz =
+  float pz =
       p_bary_clip.x * v0.z + p_bary_clip.y * v1.z + p_bary_clip.z * v2.z;
 
   if (pz < 0) {
     return; // Face is behind the image plane.
+  }
+
+  if (back_render) {
+    pz = 100 - pz;
   }
 
   // Get abs squared distance
@@ -217,16 +224,22 @@ __device__ void CheckPixelInsideFace(
     // Handle as a normal face
     if (q_size < K) {
       // Just insert it.
-      q[q_size] = {pz, face_idx, signed_dist, p_bary_clip};
       if (pz > q_max_z) {
         q_max_z = pz;
         q_max_idx = q_size;
       }
+      if (back_render) {
+        pz = 100 - pz;
+      }
+      q[q_size] = {pz, face_idx, signed_dist, p_bary_clip};
       q_size++;
     } else if (pz < q_max_z) {
       // Overwrite the old max, and find the new max.
-      q[q_max_idx] = {pz, face_idx, signed_dist, p_bary_clip};
       q_max_z = pz;
+      if (back_render) {
+        pz = 100 - pz;
+      }
+      q[q_max_idx] = {pz, face_idx, signed_dist, p_bary_clip};
       for (int i = 0; i < K; i++) {
         if (q[i].z > q_max_z) {
           q_max_z = q[i].z;
@@ -251,6 +264,7 @@ __global__ void RasterizeMeshesNaiveCudaKernel(
     const bool perspective_correct,
     const bool clip_barycentric_coords,
     const bool cull_backfaces,
+    const bool back_render,
     const int N,
     const int H,
     const int W,
@@ -315,20 +329,32 @@ __global__ void RasterizeMeshesNaiveCudaKernel(
           K,
           perspective_correct,
           clip_barycentric_coords,
-          cull_backfaces);
+          cull_backfaces,
+          back_render);
     }
 
     // TODO: make sorting an option as only top k is needed, not sorted values.
     BubbleSort(q, q_size);
     int idx = n * H * W * K + pix_idx * K;
-
-    for (int k = 0; k < q_size; ++k) {
-      face_idxs[idx + k] = q[k].idx;
-      zbuf[idx + k] = q[k].z;
-      pix_dists[idx + k] = q[k].dist;
-      bary[(idx + k) * 3 + 0] = q[k].bary.x;
-      bary[(idx + k) * 3 + 1] = q[k].bary.y;
-      bary[(idx + k) * 3 + 2] = q[k].bary.z;
+    if (back_render) {
+      for (int k = 0; k < q_size; ++k) {
+        face_idxs[idx + k] = q[q_size - k - 1].idx;
+        zbuf[idx + k] = q[q_size - k - 1].z;
+        pix_dists[idx + k] = q[q_size - k - 1].dist;
+        bary[(idx + k) * 3 + 0] = q[q_size - k - 1].bary.x;
+        bary[(idx + k) * 3 + 1] = q[q_size - k - 1].bary.y;
+        bary[(idx + k) * 3 + 2] = q[q_size - k - 1].bary.z;
+      }
+    }
+    else {
+      for (int k = 0; k < q_size; ++k) {
+        face_idxs[idx + k] = q[k].idx;
+        zbuf[idx + k] = q[k].z;
+        pix_dists[idx + k] = q[k].dist;
+        bary[(idx + k) * 3 + 0] = q[k].bary.x;
+        bary[(idx + k) * 3 + 1] = q[k].bary.y;
+        bary[(idx + k) * 3 + 2] = q[k].bary.z;
+      }
     }
   }
 }
@@ -344,7 +370,8 @@ RasterizeMeshesNaiveCuda(
     const int num_closest,
     const bool perspective_correct,
     const bool clip_barycentric_coords,
-    const bool cull_backfaces) {
+    const bool cull_backfaces,
+    const bool back_render) {
   TORCH_CHECK(
       face_verts.ndimension() == 3 && face_verts.size(1) == 3 &&
           face_verts.size(2) == 3,
@@ -413,6 +440,7 @@ RasterizeMeshesNaiveCuda(
       perspective_correct,
       clip_barycentric_coords,
       cull_backfaces,
+      back_render,
       N,
       H,
       W,
@@ -690,6 +718,7 @@ __global__ void RasterizeMeshesFineCudaKernel(
     float q_max_z = -1000;
     int q_max_idx = -1;
 
+    bool back_render = false;
     for (int m = 0; m < M; m++) {
       const int f = bin_faces[n * BH * BW * M + by * BW * M + bx * M + m];
       if (f < 0) {
@@ -710,7 +739,8 @@ __global__ void RasterizeMeshesFineCudaKernel(
           K,
           perspective_correct,
           clip_barycentric_coords,
-          cull_backfaces);
+          cull_backfaces,
+          back_render);
     }
 
     // Now we've looked at all the faces for this bin, so we can write

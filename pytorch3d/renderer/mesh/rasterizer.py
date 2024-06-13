@@ -134,6 +134,7 @@ class RasterizationSettings:
     cull_backfaces: bool = False
     z_clip_value: Optional[float] = None
     cull_to_frustum: bool = False
+    back_render = False
 
 
 class MeshRasterizer(nn.Module):
@@ -263,6 +264,7 @@ class MeshRasterizer(nn.Module):
             cull_backfaces=raster_settings.cull_backfaces,
             z_clip_value=z_clip,
             cull_to_frustum=raster_settings.cull_to_frustum,
+            back_render=raster_settings.back_render,
         )
 
         return Fragments(

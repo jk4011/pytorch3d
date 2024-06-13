@@ -10,6 +10,7 @@
 #include <torch/extension.h>
 #include <cstdio>
 #include <tuple>
+#include <cstdlib>
 #include "rasterize_coarse/rasterize_coarse.h"
 #include "utils/pytorch3d_cutils.h"
 
@@ -42,7 +43,9 @@ RasterizeMeshesNaiveCuda(
     const int num_closest,
     const bool perspective_correct,
     const bool clip_barycentric_coords,
-    const bool cull_backfaces);
+    const bool cull_backfaces,
+    const bool back_render);
+
 #endif
 // Forward pass for rasterizing a batch of meshes.
 //
@@ -116,7 +119,8 @@ RasterizeMeshesNaive(
     const int faces_per_pixel,
     const bool perspective_correct,
     const bool clip_barycentric_coords,
-    const bool cull_backfaces) {
+    const bool cull_backfaces,
+    const bool back_render) {
   // TODO: Better type checking.
   if (face_verts.is_cuda()) {
 #ifdef WITH_CUDA
@@ -133,11 +137,16 @@ RasterizeMeshesNaive(
         faces_per_pixel,
         perspective_correct,
         clip_barycentric_coords,
-        cull_backfaces);
+        cull_backfaces,
+        back_render);
 #else
     AT_ERROR("Not compiled with GPU support");
 #endif
   } else {
+    // TODO: raise error if back_render
+    if (back_render) {
+      exit(0);
+    }
     return RasterizeMeshesNaiveCpu(
         face_verts,
         mesh_to_face_first_idx,
@@ -151,6 +160,7 @@ RasterizeMeshesNaive(
         cull_backfaces);
   }
 }
+
 
 // ****************************************************************************
 // *                            BACKWARD PASS                                 *
@@ -510,8 +520,11 @@ RasterizeMeshes(
     const int max_faces_per_bin,
     const bool perspective_correct,
     const bool clip_barycentric_coords,
-    const bool cull_backfaces) {
-  if (bin_size > 0 && max_faces_per_bin > 0) {
+    const bool cull_backfaces,
+    const bool back_render) {
+    
+  if (!back_render && bin_size > 0 && max_faces_per_bin > 0) {
+    
     // Use coarse-to-fine rasterization
     at::Tensor bin_faces = RasterizeMeshesCoarse(
         face_verts,
@@ -544,6 +557,7 @@ RasterizeMeshes(
         faces_per_pixel,
         perspective_correct,
         clip_barycentric_coords,
-        cull_backfaces);
+        cull_backfaces,
+        back_render);
   }
 }

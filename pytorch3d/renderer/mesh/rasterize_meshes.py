@@ -42,6 +42,7 @@ def rasterize_meshes(
     cull_backfaces: bool = False,
     z_clip_value: Optional[float] = None,
     cull_to_frustum: bool = False,
+    back_render: bool = False,
 ):
     """
     Rasterize a batch of meshes given the shape of the desired output image.
@@ -235,6 +236,9 @@ def rasterize_meshes(
         perspective_correct,
         clip_barycentric_coords,
         cull_backfaces,
+        z_clip_value,
+        cull_to_frustum,
+        back_render,
     )
 
     if z_clip_value is not None or cull_to_frustum:
@@ -293,6 +297,7 @@ class _RasterizeFaceVerts(torch.autograd.Function):
         cull_backfaces: bool = False,
         z_clip_value: Optional[float] = None,
         cull_to_frustum: bool = True,
+        back_render: bool = False,
     ):
         # pyre-fixme[16]: Module `pytorch3d` has no attribute `_C`.
         pix_to_face, zbuf, barycentric_coords, dists = _C.rasterize_meshes(
@@ -308,6 +313,7 @@ class _RasterizeFaceVerts(torch.autograd.Function):
             perspective_correct,
             clip_barycentric_coords,
             cull_backfaces,
+            back_render,
         )
 
         ctx.save_for_backward(face_verts, pix_to_face)
